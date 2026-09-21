@@ -6,5 +6,5 @@
  * It looks like: https://script.google.com/macros/s/AKfycb.../exec
  */
 window.APP_CONFIG = {
-  API_URL: "https://script.google.com/macros/s/AKfycbxWq4A0B3473bVizO6Lz_lM8Ct1LGvhrsF_MzPpDDrNfMvB1afWWerPdUe_tCM0YbA/exec"
+  API_URL: "PASTE_YOUR_WEB_APP_URL_HERE"
 };

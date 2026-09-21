@@ -8,7 +8,11 @@
 (function () {
   "use strict";
 
+  var el = Common.el;
+  var session = Common.storage("session");
+
   var TOKEN_KEY = "admin.token";
+  var TOKEN_PATTERN = /^[a-f0-9]{64}$/;
   var REFRESH_MS = 8000;
   var LIM = { title: 200, label: 100, min: 2, max: 20 };
   var HANDLED = { handled: true };   // thrown after a 401 has already been dealt with
@@ -62,9 +66,10 @@
       if (document.visibilityState === "visible" && state.token) refresh(false);
     });
 
-    var saved = null;
-    try { saved = sessionStorage.getItem(TOKEN_KEY); } catch (e) { /* storage blocked */ }
-    if (saved && /^[a-f0-9]{64}$/.test(saved)) {
+    Common.loadFonts();
+
+    var saved = session.getItem(TOKEN_KEY);
+    if (saved && TOKEN_PATTERN.test(saved)) {
       state.token = saved;
       enterDashboard();
     } else {
@@ -74,32 +79,12 @@
 
   /* ============================================================== helpers */
 
-  function el(tag, attrs, kids) {
-    var node = document.createElement(tag);
-    Object.keys(attrs || {}).forEach(function (k) {
-      if (k === "class") node.className = attrs[k];
-      else if (k === "text") node.textContent = attrs[k];
-      else node.setAttribute(k, attrs[k]);
-    });
-    (kids || []).forEach(function (kid) { node.appendChild(kid); });
-    return node;
-  }
-
-  var ICONS = {
+  var ICON_PATHS = {
     up: "m6 15 6-6 6 6",
     down: "m6 9 6 6 6-6",
     trash: "M4 7h16M9 7V4.5h6V7M6.5 7l1 13h9l1-13"
   };
-  function icon(name) {
-    var NS = "http://www.w3.org/2000/svg";
-    var svg = document.createElementNS(NS, "svg");
-    ["viewBox:0 0 24 24", "fill:none", "stroke:currentColor", "stroke-width:2", "stroke-linecap:round", "stroke-linejoin:round"]
-      .forEach(function (p) { var kv = p.split(":"); svg.setAttribute(kv[0], kv[1]); });
-    var path = document.createElementNS(NS, "path");
-    path.setAttribute("d", ICONS[name]);
-    svg.appendChild(path);
-    return svg;
-  }
+  function icon(name) { return Common.svgIcon(ICON_PATHS[name], 2); }
 
   function toast(message, isError) {
     var t = el("div", { class: "toast" + (isError ? " error" : ""), role: isError ? "alert" : "status", text: message });
@@ -179,7 +164,7 @@
         return;
       }
       state.token = res.token;
-      try { sessionStorage.setItem(TOKEN_KEY, res.token); } catch (e) { /* ignore */ }
+      session.setItem(TOKEN_KEY, res.token);
       ui.password.value = "";
       enterDashboard();
     }, function (err) {
@@ -196,7 +181,7 @@
     state.lastFinal = null;
     state.finalDismissed = false;
     ui.finalCard.hidden = true;
-    try { sessionStorage.removeItem(TOKEN_KEY); } catch (e) { /* ignore */ }
+    session.removeItem(TOKEN_KEY);
     showLogin(message);
   }
 

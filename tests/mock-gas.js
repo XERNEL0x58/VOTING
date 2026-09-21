@@ -15,7 +15,7 @@ const path = require('path');
 const vm = require('vm');
 const crypto = require('crypto');
 
-const GS_FILES = ['Config.gs', 'Code.gs', 'Auth.gs', 'Poll.gs', 'Votes.gs'];
+const GS_FILES = ['Config.gs', 'Infra.gs', 'Code.gs', 'Auth.gs', 'Store.gs', 'PublicState.gs', 'Validation.gs', 'Results.gs', 'Admin.gs', 'Votes.gs'];
 
 function createEnv() {
   const env = {
@@ -25,12 +25,16 @@ function createEnv() {
     onWrite: null,          // hook fired before the first sheet write of an execution
     failNextClear: false,
     sleepCalls: 0,
-    logs: []
+    logs: [],
+    calls: { total: 0, inLock: 0 },      // Spreadsheet service calls (each one is a network round trip in production)
+    resetCalls() { env.calls.total = 0; env.calls.inLock = 0; }
   };
+  const tick = () => { env.calls.total++; if (env.lockHeld) env.calls.inLock++; };
 
   class MockRange {
     constructor(sheet, r, c, nr, nc) { Object.assign(this, { sheet, r, c, nr, nc }); }
     getValues() {
+      tick();
       const out = [];
       for (let i = 0; i < this.nr; i++) {
         const row = [];
@@ -43,6 +47,7 @@ function createEnv() {
       return out;
     }
     setValues(vals) {
+      tick();
       this.sheet._write('setValues', { r: this.r, c: this.c, vals });
       for (let i = 0; i < vals.length; i++) {
         const idx = this.r - 1 + i;
@@ -53,6 +58,7 @@ function createEnv() {
     }
     setValue(v) { return this.setValues([[v]]); }
     clearContent() {
+      tick();
       this.sheet._write('clear', { r: this.r, nr: this.nr });
       if (env.failNextClear) { env.failNextClear = false; throw new Error('simulated clear failure'); }
       for (let i = 0; i < this.nr; i++) {
@@ -73,16 +79,19 @@ function createEnv() {
       env.opLog.push({ op, sheet: this.name, detail });
     }
     getLastRow() {
+      tick();
       for (let i = this.data.length - 1; i >= 0; i--) {
         if (this.data[i] && this.data[i].some(v => v !== '' && v !== undefined && v !== null)) return i + 1;
       }
       return 0;
     }
     getRange(a, b, c, d) {
+      tick();
       if (typeof a === 'string') return new MockRange(this, 1, 1, 1, 1);      // A1 notation: only used for formats
       return new MockRange(this, a, b, c || 1, d || 1);
     }
     appendRow(arr) {
+      tick();
       this._write('appendRow', { arr });
       this.data[this.getLastRow()] = arr.slice();
     }
@@ -91,7 +100,7 @@ function createEnv() {
 
   const sheets = {};
   const spreadsheet = {
-    getSheetByName: n => sheets[n] || null,
+    getSheetByName: n => { tick(); return sheets[n] || null; },
     insertSheet: n => {
       if (!env.lockHeld) throw new Error('WRITE WITHOUT LOCK: insertSheet ' + n);
       env.opLog.push({ op: 'insertSheet', sheet: n });
@@ -123,7 +132,7 @@ function createEnv() {
   const captured = [];
   const sandbox = {
     console: { log() {}, error: (...a) => captured.push(a.join(' ')), warn() {} },
-    SpreadsheetApp: { getActiveSpreadsheet: () => spreadsheet, openById: () => spreadsheet, flush() {} },
+    SpreadsheetApp: { getActiveSpreadsheet: () => { tick(); return spreadsheet; }, openById: () => { tick(); return spreadsheet; }, flush() { tick(); } },
     LockService: { getScriptLock: () => lock },
     CacheService: { getScriptCache: () => cache },
     PropertiesService: { getScriptProperties: () => props },

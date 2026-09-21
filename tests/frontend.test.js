@@ -22,7 +22,7 @@ test.afterEach(() => { openDoms.splice(0).forEach(d => d.window.close()); });   
 
 const settle = async (n = 8) => { for (let i = 0; i < n; i++) await new Promise(r => setTimeout(r, 4)); };
 
-function boot(page, env, { storage = {}, session = {}, failNetwork = false } = {}) {
+function boot(page, env, { storage = {}, session = {}, failNetwork = false, failFirst = 0, htmlFirst = 0, busyVotes = 0 } = {}) {
   const dom = new JSDOM(read(page), { url: 'https://user.github.io/poll/' + page, runScripts: 'outside-only', pretendToBeVisual: true });
   openDoms.push(dom);
   const w = dom.window;
@@ -35,9 +35,16 @@ function boot(page, env, { storage = {}, session = {}, failNetwork = false } = {
   w.answerDialog = ok => { const d = w.__openDialog; d.returnValue = ok ? 'ok' : 'cancel'; d.removeAttribute('open'); d.dispatchEvent(new w.Event('close')); };
 
   w.fetchLog = [];
+  const flaky = { failFirst, htmlFirst, busyVotes };            // simulated overload: counts down per fault kind
   w.fetch = async (url, opts = {}) => {
     w.fetchLog.push({ url, opts });
     if (failNetwork) throw new TypeError('Failed to fetch');
+    if (flaky.failFirst > 0) { flaky.failFirst--; throw new TypeError('Failed to fetch'); }
+    if (flaky.htmlFirst > 0) { flaky.htmlFirst--; return { ok: true, json: async () => { throw new SyntaxError('Unexpected token <'); } }; }
+    if (flaky.busyVotes > 0 && (opts.method || 'GET') === 'POST' && JSON.parse(opts.body).action === 'vote') {
+      flaky.busyVotes--;
+      return { ok: true, json: async () => ({ ok: false, code: 'SERVER_BUSY', message: 'الخادم مشغول' }) };
+    }
     let data;
     if ((opts.method || 'GET') === 'GET') {
       data = env.get(Object.fromEntries(new URL(url).searchParams));
@@ -48,8 +55,8 @@ function boot(page, env, { storage = {}, session = {}, failNetwork = false } = {
     return { ok: true, json: async () => data };
   };
 
-  w.eval(`window.APP_CONFIG = { API_URL: ${JSON.stringify(API)} };`);
-  ['js/api.js', page === 'index.html' ? 'js/app.js' : 'js/admin.js'].forEach(f => w.eval(read(f)));
+  w.eval(`window.APP_CONFIG = { API_URL: ${JSON.stringify(API)}, RETRY_DELAY_SCALE: 0 };`);
+  ['js/common.js', 'js/api.js', page === 'index.html' ? 'js/app.js' : 'js/admin.js'].forEach(f => w.eval(read(f)));
   return dom;
 }
 
@@ -72,7 +79,7 @@ test('public: idle → active → select → vote → success, with no statistic
   assert.deepEqual(visible(dom.window.document), ['idle']);
 
   const { contestId } = env.post({ action: 'admin_start', token, title: 'من هو الأفضل؟', options: ['مصور', 'نجار', 'مبرمج'] });
-  env.advance(11);
+  env.advance(env.context.CONFIG.PUBLIC_STATE_TTL_SEC + 1);
   dom = boot('index.html', env);
   await settle();
   const doc = dom.window.document;
@@ -141,7 +148,7 @@ test('public: contest ends while the page is open → vote is refused and "ended
   const seen = boot('index.html', env, { storage: { 'poll.lastSeenContest': contestId } });
   await settle();
   assert.deepEqual(visible(seen.window.document), ['ended']);
-  env.advance(11);
+  env.advance(env.context.CONFIG.PUBLIC_STATE_TTL_SEC + 1);
   const fresh = boot('index.html', env);
   await settle();
   assert.deepEqual(visible(fresh.window.document), ['idle']);
@@ -162,6 +169,60 @@ test('public: network failure shows the error state and retry works', async () =
   await settle();
   assert.deepEqual(visible(dom.window.document), ['error']);
   assert.ok(!/boom/.test(dom.window.document.body.textContent), 'no internals shown');
+});
+
+test('public: overloaded servers are retried automatically — the visitor never has to press anything', async () => {
+  const env = createEnv();
+  env.post({ action: 'admin_start', token: adminSession(env), title: 'سؤال', options: ['أ', 'ب'] });
+
+  const dropped = boot('index.html', env, { failFirst: 2 });               // two connection failures, then fine
+  await settle(20);
+  assert.deepEqual(visible(dropped.window.document), ['active']);
+  assert.equal(dropped.window.fetchLog.length, 3);
+
+  const html = boot('index.html', env, { htmlFirst: 2 });                  // Google's HTML error page (not JSON)
+  await settle(20);
+  assert.deepEqual(visible(html.window.document), ['active']);
+});
+
+test('public: when every retry fails the visitor gets the error state with a retry button', async () => {
+  const env = createEnv();
+  const dom = boot('index.html', env, { failNetwork: true });
+  await settle(20);
+  assert.deepEqual(visible(dom.window.document), ['error']);
+  assert.equal(dom.window.fetchLog.length, 4, 'gave up after the read budget (4 attempts)');
+});
+
+test('public: a busy server is retried for the voter, who sees one calm message and then success', async () => {
+  const env = createEnv();
+  const token = adminSession(env);
+  env.post({ action: 'admin_start', token, title: 'سؤال', options: ['أ', 'ب'] });
+
+  const dom = boot('index.html', env, { busyVotes: 3 });
+  await settle();
+  const doc = dom.window.document;
+  const radio = doc.querySelectorAll('input[type=radio]')[0];
+  radio.checked = true;
+  radio.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+  doc.getElementById('voteForm').dispatchEvent(new dom.window.Event('submit', { cancelable: true, bubbles: true }));
+  await settle(20);
+
+  assert.deepEqual(visible(doc), ['success']);
+  assert.equal(dom.window.fetchLog.filter(f => f.opts.method === 'POST').length, 4, '3 busy answers + 1 success');
+  assert.equal(env.post({ action: 'admin_results', token }).totalVotes, 1, 'counted exactly once');
+});
+
+test('public: the first paint never waits for a third-party font (no render-blocking stylesheet)', async () => {
+  for (const page of ['index.html', 'admin.html']) {
+    const html = read(page);
+    assert.ok(!/<link[^>]+rel="stylesheet"[^>]+fonts\.googleapis\.com/.test(html), page + ': font stylesheet must not block rendering');
+    assert.match(html, /rel="preconnect" href="https:\/\/script\.google\.com"/, page + ': connection to Apps Script starts early');
+  }
+  const env = createEnv();
+  const dom = boot('index.html', env);
+  await settle();
+  const fontLinks = Array.from(dom.window.document.head.querySelectorAll('link[rel=stylesheet]')).filter(l => /fonts\.googleapis/.test(l.href));
+  assert.equal(fontLinks.length, 1, 'the font is added after the page starts, without blocking it');
 });
 
 test('public: server text is rendered as text, never as HTML', async () => {

@@ -75,7 +75,7 @@ test('4/5. public endpoint exposes question + options only, never any statistics
   const { contestId } = start(env, token);
   vote(env, contestId, '1', voter(1));
   vote(env, contestId, '1', voter(2));
-  env.advance(11);                                   // bypass the 10s public cache
+  env.advance(env.context.CONFIG.PUBLIC_STATE_TTL_SEC + 1);                                   // let the public-state cache expire
 
   const pub = env.get({ action: 'public_poll' });
   assert.deepEqual(Object.keys(pub).sort(), ['contestId', 'options', 'ok', 'status', 'title'].sort());
@@ -437,7 +437,7 @@ test('errors never leak internals (stack traces, sheet ids, secrets)', () => {
   const token = login(env);
   start(env, token);
   env.sheets.Options.getRange = () => { throw new Error('boom: secret-internal-detail at Sheet.gs:42'); };
-  env.advance(11);
+  env.advance(env.context.CONFIG.PUBLIC_STATE_TTL_SEC + 1);
   const r = env.get({ action: 'public_poll' });
   assert.deepEqual(r, { ok: false, code: 'INTERNAL_ERROR', message: 'حدث خطأ غير متوقع، حاول مرة أخرى' });
   assert.ok(env.captured.some(l => l.includes('secret-internal-detail')), 'logged server-side only');
