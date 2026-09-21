@@ -42,10 +42,6 @@
 
   function toFailure(err) {
     if (err instanceof ApiFailure) return err;
-    // Log the real browser/network error to the console (F12 → Console) so a deployment
-    // problem (wrong URL, CORS, "Anyone" access not set, old /exec link) can be diagnosed —
-    // the UI message itself stays generic on purpose.
-    if (window.console && console.error) console.error("Api network error:", err);
     return new ApiFailure("NETWORK", "تعذّر الاتصال بالخادم، تحقق من الإنترنت وأعد المحاولة");
   }
 
