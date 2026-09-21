@@ -297,3 +297,17 @@ dialog .actions { margin-top: 22px; justify-content: flex-start; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+/* ---- diagnostics panel (only rendered with ?debug=1) ---- */
+.debug {
+  margin: 24px auto 0; max-width: 560px; padding: 14px 16px;
+  border: 1px dashed var(--line, #2a3552); border-radius: 12px;
+  background: rgba(255, 255, 255, .03); font-size: 13px;
+}
+.debug-info, .debug-log {
+  margin: 10px 0; padding: 8px 10px; overflow-x: auto; white-space: pre;
+  font: 12px/1.5 ui-monospace, Menlo, Consolas, monospace; text-align: left;
+  background: rgba(0, 0, 0, .25); border-radius: 8px;
+}
+.debug-log { max-height: 220px; overflow-y: auto; }
+.debug-actions { display: flex; gap: 8px; flex-wrap: wrap; }

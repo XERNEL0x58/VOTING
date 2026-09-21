@@ -145,3 +145,21 @@ test('cache eviction mid-contest is harmless: duplicates still refused, new vote
   assert.equal(castVote(env, c, 2).ok, true);
   assert.equal(env.get({}).status, 'ACTIVE');
 });
+
+test('ping touches nothing: no Sheet, no lock, no data — only a timestamp', () => {
+  const env = createEnv();
+  const m = measure(env, () => env.get({ action: 'ping' }));
+  assert.equal(m.total, 0);
+  assert.deepEqual(Object.keys(m.result).sort(), ['ok', 'serverTime']);
+});
+
+test('diagnose() is read-only and works before and after the sheets exist', () => {
+  const env = createEnv();
+  assert.ok(env.context.diagnose().some(l => /run setup\(\) first/.test(l)));
+  const c = startContest(env);
+  castVote(env, c, 1);
+  const before = JSON.stringify(env.sheets.Voters.data);
+  const lines = env.context.diagnose();
+  assert.ok(lines.length >= 6 && lines.every(l => !/ERROR/.test(l)), lines.join(' | '));
+  assert.equal(JSON.stringify(env.sheets.Voters.data), before, 'no data changed');
+});

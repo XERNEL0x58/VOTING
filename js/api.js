@@ -9,29 +9,46 @@
  * error page, or the script may say SERVER_BUSY. Each call therefore retries with exponential
  * backoff and random jitter (so the phones do not retry in lock-step), within a fixed budget.
  * Retrying a vote is safe: the server refuses a second vote from the same voter id.
+ *
+ * Observability: every request reports how long it took and how it ended through Api.onEvent(),
+ * which is what the ?debug=1 panel (js/debug.js) displays.
  */
 (function () {
   "use strict";
 
   var POLICY = {
-    read:  { attempts: 4, baseMs: 700,  maxMs: 4000, timeoutMs: 12000, retryTransient: true  },
+    read:  { attempts: 3, baseMs: 800,  maxMs: 4000, timeoutMs: 20000, retryTransient: true  },
     vote:  { attempts: 8, baseMs: 900,  maxMs: 6000, timeoutMs: 20000, retryTransient: true  },
     admin: { attempts: 3, baseMs: 1200, maxMs: 4000, timeoutMs: 25000, retryTransient: false }
   };
 
-  function ApiFailure(code, message) {
+  var SNIPPET_CHARS = 90;
+  var listeners = [];
+
+  function ApiFailure(code, message, detail) {
     this.name = "ApiFailure";
     this.code = code;
     this.message = message;
+    this.detail = detail || "";
   }
   ApiFailure.prototype = Object.create(Error.prototype);
 
-  /* ----------------------------------------------------------- transport */
+  /* ------------------------------------------------------------ events */
+
+  function emit(event) {
+    listeners.forEach(function (fn) { try { fn(event); } catch (e) { /* a broken listener must never break requests */ } });
+  }
+
+  /* --------------------------------------------------------- transport */
 
   function apiUrl() {
     var url = (window.APP_CONFIG && window.APP_CONFIG.API_URL) || "";
     if (!/^https:\/\/script\.google(usercontent)?\.com\//.test(url)) {
       throw new ApiFailure("NOT_CONFIGURED", "لم يتم ضبط رابط الخادم في js/config.js");
+    }
+    if (/\/dev(\?|$)/.test(url)) {
+      throw new ApiFailure("NOT_CONFIGURED",
+        "الرابط في js/config.js ينتهي بـ /dev وهو رابط تجريبي يعمل للمالك فقط. استخدم رابط النشر الذي ينتهي بـ /exec");
     }
     return url;
   }
@@ -44,24 +61,43 @@
       .finally(function () { clearTimeout(timer); });
   }
 
+  /** Read the body as text first, so an HTML error page can be told apart from a JSON answer. */
   function parse(res) {
-    if (!res.ok) throw new ApiFailure("NETWORK", "تعذّر الاتصال بالخادم");
-    return res.json().catch(function () {
-      throw new ApiFailure("BAD_RESPONSE", "استجابة غير صالحة من الخادم");
+    if (!res.ok) throw new ApiFailure("NETWORK", "تعذّر الاتصال بالخادم", "HTTP " + res.status);
+    return res.text().then(function (text) {
+      try {
+        return JSON.parse(text);
+      } catch (e) {
+        throw new ApiFailure("BAD_RESPONSE", "استجابة غير صالحة من الخادم", text.slice(0, SNIPPET_CHARS));
+      }
     });
   }
 
   function toFailure(err) {
     if (err instanceof ApiFailure) return err;
-    return new ApiFailure("NETWORK", "تعذّر الاتصال بالخادم، تحقق من الإنترنت وأعد المحاولة");
+    var aborted = err && err.name === "AbortError";
+    return new ApiFailure("NETWORK", "تعذّر الاتصال بالخادم، تحقق من الإنترنت وأعد المحاولة",
+      aborted ? "timeout" : String((err && err.message) || err));
   }
 
-  function request(makeFetch, timeoutMs) {
-    return withTimeout(makeFetch, timeoutMs).then(parse).catch(function (e) { throw toFailure(e); });
+  /** One HTTP round trip, reported through emit(). */
+  function request(label, makeFetch, timeoutMs) {
+    var started = Date.now();
+    function report(outcome, code, detail) {
+      emit({ label: label, ms: Date.now() - started, outcome: outcome, code: code || "", detail: detail || "" });
+    }
+    return withTimeout(makeFetch, timeoutMs).then(parse).then(function (data) {
+      report("ok", data && data.code, data && data.status);
+      return data;
+    }, function (e) {
+      var failure = toFailure(e);
+      report("fail", failure.code, failure.detail);
+      throw failure;
+    });
   }
 
   function getRequest(action, timeoutMs) {
-    return request(function (signal) {
+    return request(action, function (signal) {
       return fetch(apiUrl() + "?action=" + encodeURIComponent(action), {
         method: "GET", redirect: "follow", cache: "no-store", signal: signal
       });
@@ -69,7 +105,7 @@
   }
 
   function postRequest(payload, timeoutMs) {
-    return request(function (signal) {
+    return request(payload.action, function (signal) {
       return fetch(apiUrl(), {
         method: "POST", redirect: "follow", cache: "no-store", signal: signal,
         headers: { "Content-Type": "text/plain;charset=utf-8" },
@@ -78,7 +114,7 @@
     }, timeoutMs);
   }
 
-  /* --------------------------------------------------------------- retry */
+  /* ------------------------------------------------------------- retry */
 
   function delayScale() {
     var scale = window.APP_CONFIG && window.APP_CONFIG.RETRY_DELAY_SCALE;
@@ -119,10 +155,16 @@
     return attempt(0);
   }
 
-  /* -------------------------------------------------------------- public */
+  /* ------------------------------------------------------------ public */
 
   window.Api = {
     ApiFailure: ApiFailure,
+
+    /** Subscribe to {label, ms, outcome, code, detail} for every HTTP round trip. */
+    onEvent: function (fn) { listeners.push(fn); },
+
+    /** Bare Apps Script round trip, no retry: used by the ?debug=1 panel. */
+    ping: function () { return getRequest("ping", POLICY.read.timeoutMs); },
 
     /** @param {{onRetry: function(number)}=} opts */
     publicPoll: function (opts) {

@@ -6,6 +6,15 @@
 (function () {
   "use strict";
 
+  // If a script failed to upload/load, say so instead of spinning forever.
+  if (!window.Common || !window.Api) {
+    document.addEventListener("DOMContentLoaded", function () {
+      var note = document.getElementById("loadingText");
+      if (note) note.textContent = "تعذّر تحميل ملفات الموقع. حدّث الصفحة، وتأكد أن كل ملفات js/ مرفوعة (ومنها common.js).";
+    });
+    return;
+  }
+
   var el = Common.el;
 
   var POLL_INTERVAL_MS = 45000;

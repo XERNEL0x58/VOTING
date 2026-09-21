@@ -15,7 +15,7 @@ const path = require('path');
 const vm = require('vm');
 const crypto = require('crypto');
 
-const GS_FILES = ['Config.gs', 'Infra.gs', 'Code.gs', 'Auth.gs', 'Store.gs', 'PublicState.gs', 'Validation.gs', 'Results.gs', 'Admin.gs', 'Votes.gs'];
+const GS_FILES = ['Config.gs', 'Infra.gs', 'Code.gs', 'Auth.gs', 'Store.gs', 'PublicState.gs', 'Validation.gs', 'Results.gs', 'Admin.gs', 'Votes.gs', 'Diagnostics.gs'];
 
 function createEnv() {
   const env = {

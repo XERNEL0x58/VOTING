@@ -22,8 +22,8 @@ test.afterEach(() => { openDoms.splice(0).forEach(d => d.window.close()); });   
 
 const settle = async (n = 8) => { for (let i = 0; i < n; i++) await new Promise(r => setTimeout(r, 4)); };
 
-function boot(page, env, { storage = {}, session = {}, failNetwork = false, failFirst = 0, htmlFirst = 0, busyVotes = 0 } = {}) {
-  const dom = new JSDOM(read(page), { url: 'https://user.github.io/poll/' + page, runScripts: 'outside-only', pretendToBeVisual: true });
+function boot(page, env, { storage = {}, session = {}, failNetwork = false, failFirst = 0, htmlFirst = 0, busyVotes = 0, api = API, query = '', omit = [] } = {}) {
+  const dom = new JSDOM(read(page), { url: 'https://user.github.io/poll/' + page + query, runScripts: 'outside-only', pretendToBeVisual: true });
   openDoms.push(dom);
   const w = dom.window;
   Object.entries(storage).forEach(([k, v]) => w.localStorage.setItem(k, v));
@@ -34,16 +34,17 @@ function boot(page, env, { storage = {}, session = {}, failNetwork = false, fail
   w.HTMLDialogElement.prototype.showModal = function () { this.setAttribute('open', ''); w.__openDialog = this; };
   w.answerDialog = ok => { const d = w.__openDialog; d.returnValue = ok ? 'ok' : 'cancel'; d.removeAttribute('open'); d.dispatchEvent(new w.Event('close')); };
 
+  const reply = text => ({ ok: true, status: 200, text: async () => text });
   w.fetchLog = [];
   const flaky = { failFirst, htmlFirst, busyVotes };            // simulated overload: counts down per fault kind
   w.fetch = async (url, opts = {}) => {
     w.fetchLog.push({ url, opts });
     if (failNetwork) throw new TypeError('Failed to fetch');
     if (flaky.failFirst > 0) { flaky.failFirst--; throw new TypeError('Failed to fetch'); }
-    if (flaky.htmlFirst > 0) { flaky.htmlFirst--; return { ok: true, json: async () => { throw new SyntaxError('Unexpected token <'); } }; }
+    if (flaky.htmlFirst > 0) { flaky.htmlFirst--; return reply('<!DOCTYPE html><html><body>Sorry, unable to open the file at present.</body></html>'); }
     if (flaky.busyVotes > 0 && (opts.method || 'GET') === 'POST' && JSON.parse(opts.body).action === 'vote') {
       flaky.busyVotes--;
-      return { ok: true, json: async () => ({ ok: false, code: 'SERVER_BUSY', message: 'الخادم مشغول' }) };
+      return reply(JSON.stringify({ ok: false, code: 'SERVER_BUSY', message: 'الخادم مشغول' }));
     }
     let data;
     if ((opts.method || 'GET') === 'GET') {
@@ -52,11 +53,12 @@ function boot(page, env, { storage = {}, session = {}, failNetwork = false, fail
       assert.equal(opts.headers['Content-Type'], 'text/plain;charset=utf-8', 'POST must be a CORS "simple request"');
       data = env.post(opts.body);
     }
-    return { ok: true, json: async () => data };
+    return reply(JSON.stringify(data));
   };
 
-  w.eval(`window.APP_CONFIG = { API_URL: ${JSON.stringify(API)}, RETRY_DELAY_SCALE: 0 };`);
-  ['js/common.js', 'js/api.js', page === 'index.html' ? 'js/app.js' : 'js/admin.js'].forEach(f => w.eval(read(f)));
+  w.eval(`window.APP_CONFIG = { API_URL: ${JSON.stringify(api)}, RETRY_DELAY_SCALE: 0 };`);
+  ['js/common.js', 'js/api.js', 'js/debug.js', page === 'index.html' ? 'js/app.js' : 'js/admin.js']
+    .filter(f => !omit.includes(f)).forEach(f => w.eval(read(f)));
   return dom;
 }
 
@@ -190,7 +192,7 @@ test('public: when every retry fails the visitor gets the error state with a ret
   const dom = boot('index.html', env, { failNetwork: true });
   await settle(20);
   assert.deepEqual(visible(dom.window.document), ['error']);
-  assert.equal(dom.window.fetchLog.length, 4, 'gave up after the read budget (4 attempts)');
+  assert.equal(dom.window.fetchLog.length, 3, 'gave up after the read budget (3 attempts)');
 });
 
 test('public: a busy server is retried for the voter, who sees one calm message and then success', async () => {
@@ -223,6 +225,49 @@ test('public: the first paint never waits for a third-party font (no render-bloc
   await settle();
   const fontLinks = Array.from(dom.window.document.head.querySelectorAll('link[rel=stylesheet]')).filter(l => /fonts\.googleapis/.test(l.href));
   assert.equal(fontLinks.length, 1, 'the font is added after the page starts, without blocking it');
+});
+
+test('public: the /dev test URL (owner-only) is rejected with an explanation instead of failing silently elsewhere', async () => {
+  const env = createEnv();
+  const dom = boot('index.html', env, { api: 'https://script.google.com/macros/s/TEST/dev' });
+  await settle();
+  assert.deepEqual(visible(dom.window.document), ['error']);
+  assert.match(dom.window.document.getElementById('errorText').textContent, /\/dev.*\/exec/);
+  assert.equal(dom.window.fetchLog.length, 0, 'no request is even sent');
+});
+
+test('public: a missing script file is reported on screen, not an endless spinner', async () => {
+  const env = createEnv();
+  const dom = boot('index.html', env, { omit: ['js/common.js'] });
+  await settle();
+  assert.match(dom.window.document.getElementById('loadingText').textContent, /common\.js/);
+});
+
+test('debug panel: invisible to visitors, available with ?debug=1, shows timings and the parallel test', async () => {
+  const env = createEnv();
+  const normal = boot('index.html', env);
+  await settle();
+  assert.equal(normal.window.document.querySelector('.debug'), null);
+
+  const dom = boot('index.html', env, { query: '?debug=1' });
+  await settle();
+  const doc = dom.window.document;
+  assert.ok(doc.querySelector('.debug'), 'panel is shown');
+  assert.match(doc.querySelector('.debug-log').textContent, /public_poll\s+\d+ ms/);
+
+  Array.from(doc.querySelectorAll('.debug button')).find(b => /5/.test(b.textContent)).click();
+  await settle(20);
+  assert.match(doc.querySelector('.debug-log').textContent, /parallel x5 .*(answered in parallel|one by one)/);
+  assert.equal(dom.window.fetchLog.filter(f => /action=ping/.test(f.url)).length, 5);
+});
+
+test('debug panel: an HTML error page from Google is named as such, with a snippet', async () => {
+  const env = createEnv();
+  const dom = boot('index.html', env, { query: '?debug=1', htmlFirst: 1 });
+  await settle(20);
+  const log = dom.window.document.querySelector('.debug-log').textContent;
+  assert.match(log, /BAD_RESPONSE/);
+  assert.match(log, /unable to open the file/);
 });
 
 test('public: server text is rendered as text, never as HTML', async () => {
