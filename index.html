@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#080d1a">
+  <meta name="color-scheme" content="dark">
+  <title>مسابقة التصويت</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="brand">
+      <span class="brand-mark" aria-hidden="true">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="4"/><path d="m8.5 12.5 2.5 2.5 4.5-5"/></svg>
+      </span>
+      <span>مسابقة التصويت</span>
+    </header>
+
+    <section class="stage" aria-live="polite">
+
+      <!-- loading -->
+      <div class="view message" data-view="loading">
+        <div class="spinner" role="status" aria-label="جارٍ التحميل"></div>
+        <p>جارٍ تحميل المسابقة…</p>
+      </div>
+
+      <!-- no active contest -->
+      <div class="view message" data-view="idle" hidden>
+        <div class="message-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+        </div>
+        <h2>لا توجد مسابقة الآن</h2>
+        <p>عند بدء مسابقة جديدة ستظهر هنا تلقائيًا، يمكنك ترك الصفحة مفتوحة.</p>
+      </div>
+
+      <!-- active contest -->
+      <form class="view" data-view="active" id="voteForm" novalidate hidden>
+        <h1 class="question" id="question"></h1>
+        <fieldset>
+          <legend class="sr-only">اختر إجابة واحدة</legend>
+          <div class="options" id="options"></div>
+        </fieldset>
+        <div class="submit-row">
+          <button type="submit" class="btn primary block" id="submitBtn" disabled>تأكيد التصويت</button>
+          <p class="note" id="formNote" role="status"></p>
+        </div>
+        <p class="sealed">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2.5"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
+          <span>النتائج مغلقة حتى ينتهي التصويت</span>
+        </p>
+      </form>
+
+      <!-- vote submitted -->
+      <div class="view message" data-view="success" hidden>
+        <div class="message-icon ok" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>
+        </div>
+        <h2>تم تسجيل تصويتك بنجاح</h2>
+        <p>شكرًا لمشاركتك</p>
+      </div>
+
+      <!-- already voted -->
+      <div class="view message" data-view="already" hidden>
+        <div class="message-icon ok" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>
+        </div>
+        <h2>تم تسجيل تصويتك مسبقًا</h2>
+        <p>يُحتسب صوت واحد لكل مشاركة. شكرًا لمشاركتك.</p>
+      </div>
+
+      <!-- contest ended -->
+      <div class="view message" data-view="ended" hidden>
+        <div class="message-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 21V4"/><path d="M6 4h11l-2 4 2 4H6"/></svg>
+        </div>
+        <h2>انتهت المسابقة</h2>
+        <p>أُغلق التصويت. شكرًا لكل من شارك.</p>
+      </div>
+
+      <!-- backend / network error -->
+      <div class="view message" data-view="error" hidden>
+        <div class="message-icon err" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v5"/><path d="M12 16.5v.01"/></svg>
+        </div>
+        <h2>تعذّر تحميل المسابقة</h2>
+        <p id="errorText">تحقق من اتصالك بالإنترنت ثم أعد المحاولة.</p>
+        <button type="button" class="btn" id="retryBtn">إعادة المحاولة</button>
+      </div>
+
+    </section>
+
+    <footer class="foot">لا تُعرض أي نتائج أثناء المسابقة حفاظًا على نزاهة التصويت.</footer>
+  </main>
+
+  <script src="js/config.js"></script>
+  <script src="js/api.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,11 @@
+{
+  "name": "arabic-voting-contest",
+  "private": true,
+  "description": "Arabic RTL voting contest: GitHub Pages + Google Apps Script + Google Sheets",
+  "scripts": {
+    "test": "node --test tests/*.test.js"
+  },
+  "devDependencies": {
+    "jsdom": "^24.0.0"
+  }
+}
